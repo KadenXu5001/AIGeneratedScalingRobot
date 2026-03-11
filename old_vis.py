@@ -50,7 +50,7 @@ def step_once():
     
     app_state["step_index"] = t + 1
 
-    #print(f"t={t}, positions range: y={positions[:,1].min():.3f} to {positions[:,1].max():.3f}")
+    print(f"t={t}, positions range: y={positions[:,1].min():.3f} to {positions[:,1].max():.3f}")
     
     return positions, activations, center_of_mass
 
@@ -177,13 +177,5 @@ if __name__ == "__main__":
     
     print(f"\nVisualizer running at http://localhost:{args.port}")
     print("Press Ctrl+C to stop\n")
-
-    masses_np = simulator.x.to_numpy()
-    print(f"Initial positions sample: {masses_np[0, 0, :n_masses_cached]}")
-    print(f"NaN in initial x: {np.isnan(masses_np).any()}")
-    print(f"NaN in initial v: {np.isnan(simulator.v.to_numpy()).any()}")
-    print(f"control_params keys: {robot['control_params'].keys()}")
-    print(f"NaN in weights1: {np.isnan(robot['control_params']['weights1']).any()}")
-    print(f"NaN in weights2: {np.isnan(robot['control_params']['weights2']).any()}")
     
     app.run(host="0.0.0.0", port=args.port, debug=args.debug, threaded=False, use_reloader=False)

@@ -10,17 +10,18 @@ taichi:
 ## Simulator configuration parameters
 # The ONLY values that you should need to change are: n_sims, learning_steps
 # Use n_sims to set the number of robots to run in parallel.
-# Use sim_steps to set the number of simulation steps to run for each robot. The default probably does not need to be changed. 
+# Use sim_steps to set the number of simulation steps to run for each robot. The default probably does not need to be changed.
+## Simulator configuration parameters
 simulator:
-  n_sims: 16
+  n_sims: 32
   sim_steps: 1000
-  learning_steps: 40
+  learning_steps: 90
   dt: 3e-3
   eps: 1e-5
   springA: 0.1
   springK: 15000.0
   ground_height: 0.02
-  gravity: 10.0
+  gravity: 8.0
   friction: 0.9
   restitution: 0.1
   drag_damping: 10.0
@@ -30,3 +31,22 @@ simulator:
   adam_beta1: 0.9
   adam_beta2: 0.999
   learning_rate: 7e-3
+# simulator:
+#   n_sims: 16
+#   sim_steps: 1000
+#   learning_steps: 40
+#   dt: 3e-3
+#   eps: 1e-5
+#   springA: 0.1
+#   springK: 15000.0
+#   ground_height: 0.02
+#   gravity: 10.0
+#   friction: 0.9
+#   restitution: 0.1
+#   drag_damping: 10.0
+#   nn_hidden_size: 128
+#   nn_cpg_count: 6
+#   cpg_omega: 15.0
+#   adam_beta1: 0.9
+#   adam_beta2: 0.999
+#   learning_rate: 7e-3
