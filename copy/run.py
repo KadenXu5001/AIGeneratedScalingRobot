@@ -1,4 +1,4 @@
-from simulator import Simulator
+from Old.simulator import Simulator
 from utils import load_config
 from argparse import ArgumentParser
 from robot import load_robots

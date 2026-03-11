@@ -1,6 +1,6 @@
 from flask import Flask, render_template, Response
 from argparse import ArgumentParser
-from simulator import Simulator
+from heightSim import HeightSimulator
 from utils import load_config
 import threading, time, json, numpy as np
 
@@ -122,7 +122,7 @@ def stream():
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("--input", type=str, default="robot_0.npy", help="Path to saved robot .npy file")
+    parser.add_argument("--input", type=str, default="robot_0a.npy", help="Path to saved robot .npy file")
     parser.add_argument("--config", type=str, default="config.yaml", help="Path to config file")
     parser.add_argument("--port", type=int, default=5000)
     parser.add_argument("--debug", action="store_true")
@@ -151,7 +151,7 @@ if __name__ == "__main__":
     
     # Create simulator
     print("Initializing simulator...")
-    simulator = Simulator(
+    simulator = HeightSimulator(
         sim_config=config["simulator"],
         taichi_config=config["taichi"],
         seed=config["seed"],

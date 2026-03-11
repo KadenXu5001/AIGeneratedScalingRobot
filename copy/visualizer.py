@@ -1,6 +1,6 @@
 from flask import Flask, render_template, Response
 from argparse import ArgumentParser
-from simulator import Simulator
+from Old.simulator import Simulator
 from utils import load_config
 import threading, time, json, numpy as np
 
