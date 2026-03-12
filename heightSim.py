@@ -121,7 +121,10 @@ class HeightSimulator:
         self.hidden = ti.field(dtype=ti.f32, shape=(self.n_sims[None], self.steps[None], self.nn_hidden_size[None]), needs_grad=self.needs_grad)  # Hidden layer activations at each timestep
         self.n_hidden = ti.field(dtype=ti.i32, shape=(self.n_sims[None],), needs_grad=False)                                                      # Actual hidden units used per robot (scales with n_masses)
         self.loss = ti.field(dtype=ti.f32, shape=(self.n_sims[None],), needs_grad=self.needs_grad)                                                 # Per-robot scalar loss value
-        self.adam_step = ti.field(dtype=ti.i32, shape=(), needs_grad=False)                                                                        # Adam step counter (for bias correction)
+        self.adam_step = ti.field(dtype=ti.i32, shape=(), needs_grad=False)                
+        # Add this in allocate_fields()
+        self.lowest_point = ti.field(dtype=ti.f32, shape=(self.n_sims[None],), needs_grad=self.needs_grad)      
+                                                          # Adam step counter (for bias correction)
 
     def train(self):
         fitness_history = []  # Track loss values across training iterations
@@ -134,50 +137,54 @@ class HeightSimulator:
         return -np.array(fitness_history).T  # Return negated loss as "fitness" (higher = better), shape [n_sims, steps]
 
     def learning_step(self):
-        self.clear_grads()          # Zero all gradient buffers before each step
-        self.reinitialize_robots()  # Reset all simulation state (positions, velocities, etc.)
-        self.forward()              # Run full simulation forward (includes accumulate_sum_exp)
-        self.compute_loss()         # Compute loss from accumulated sum_exp
-        self.loss.grad.fill(1.0 / 20.0)  # Seed backprop: pre-scale by 1/temperature since the /temperature
-                                         # division is applied in Python after compute_log_sum_exp, not inside the kernel
+        self.clear_grads()          # Zero all gradient buffers
+        self.reinitialize_robots()  # Reset simulation state
+        self.forward()              # This now calls compute_final_height at the end
+        
+        # We no longer call self.compute_loss() because it had the TEMPERATURE math.
+        # compute_final_height() was already called at the end of forward(), 
+        # but calling it here again (or ensuring it was called) is fine.
+        
+        # Seed backprop: use 1.0 because we aren't dividing by TEMPERATURE anymore.
+        # We divide by n_sims (optional) to keep gradients stable regardless of population size.
+        self.loss.grad.fill(1.0 / self.n_sims[None]) 
+        
         self.backward()             # Backpropagate through all timesteps
-        self.adam_step[None] += 1   # Increment Adam step counter for bias correction
+        self.adam_step[None] += 1   # Increment Adam step
         self.clip_grads()
-        self.update_weights()       # Apply Adam update to all weights and biases
-        return self.loss.to_numpy() # Return current loss values as numpy array
+        self.update_weights()       # Apply Adam update
+        
+        return self.loss.to_numpy()
 
     def evaluation_step(self):
-        self.reinitialize_robots()  # Reset simulation state
-        self.forward()              # Run simulation forward only (no gradient tracking)
-        self.compute_loss()         # Compute final loss
-        return self.loss.to_numpy() # Return final fitness scores
+        self.reinitialize_robots()
+        self.forward() # forward() now includes the final height calc
+        return self.loss.to_numpy()
 
     def forward(self):
-        # Sequentially advance simulation one timestep at a time
         for t in range(0, self.steps[None]):
-            self.compute_com(t)           # Compute center of mass at current timestep
-            self.nn1(t)                   # Compute hidden layer activations from mass states
-            self.nn2(t)                   # Compute spring activations from hidden layer
-            self.apply_spring_force(t)    # Compute spring impulses and accumulate into vinc
-            self.advance(t + 1)           # Integrate physics: update positions and velocities
-            self.update_max_height(t + 1)
-        self.compute_com(self.steps[None])  # Compute final center of mass after last step
-        self.accumulate_sum_exp()           # Accumulate exp(height) across all timesteps into sum_exp
+            self.compute_com(t)
+            self.nn1(t)
+            self.nn2(t)
+            self.apply_spring_force(t)
+            self.advance(t + 1)
+        # Only compute the height stats at the very last step
+        self.compute_com(self.steps[None])
+        self.find_lowest_points()      # Step 1
+        self.compute_final_loss_kernel()
 
     def backward(self):
-        # Replay forward operations in reverse order to accumulate gradients (BPTT)
-        # Note: compute_loss is a Python wrapper (not a kernel), so we call compute_log_sum_exp.grad() directly.
-        # The /temperature scaling was applied to loss values in Python — loss.grad is already seeded
-        # with 1.0 in learning_step, which correctly propagates through the unscaled log kernel.
-        self.compute_log_sum_exp.grad()                   # Backprop through -log(sum_exp) step
-        self.accumulate_sum_exp.grad()                    # Backprop through sum_exp accumulation — gradients flow to self.center
-        self.compute_com.grad(self.steps[None])           # Backprop through final COM computation
-        for t in range(self.steps[None]-1, -1, -1):      # Iterate timesteps in reverse
-            self.advance.grad(t + 1)                      # Backprop through physics integration
-            self.apply_spring_force.grad(t)               # Backprop through spring force application
-            self.nn2.grad(t)                              # Backprop through output layer
-            self.nn1.grad(t)                              # Backprop through input layer
-            self.compute_com.grad(t)                      # Backprop through COM computation
+        # Start backprop from the final height calculation
+        self.compute_final_loss_kernel.grad()
+        self.find_lowest_points.grad() # Taichi can now differentiate this!
+        self.compute_com.grad(self.steps[None])
+        
+        for t in range(self.steps[None]-1, -1, -1):
+            self.advance.grad(t + 1)
+            self.apply_spring_force.grad(t)
+            self.nn2.grad(t)
+            self.nn1.grad(t)
+            self.compute_com.grad(t)
 
     def initialize(self, masses, springs):
         n_robots = len(masses)  # Number of robots to initialize
@@ -560,3 +567,25 @@ class HeightSimulator:
                 self.max_height[sim_idx],
                 self.center[sim_idx, t].y
             )
+    @ti.kernel
+    def find_lowest_points(self):
+        # Initialize with a high value
+        for sim_idx in range(self.n_sims[None]):
+            self.lowest_point[sim_idx] = 1e10
+
+        # This is the "Flattened" loop
+        # We iterate over EVERY mass in EVERY sim in one big parallel grid
+        for sim_idx, m_idx in ti.ndrange(self.n_sims[None], self.max_n_masses[None]):
+            if m_idx < self.n_masses[sim_idx]:
+                curr_y = self.x[sim_idx, self.steps[None], m_idx].y
+                # ti.atomic_min is the key! It safely finds the minimum across 
+                # parallel threads without needing a nested loop.
+                ti.atomic_min(self.lowest_point[sim_idx], curr_y)
+
+    @ti.kernel
+    def compute_final_loss_kernel(self):
+        for sim_idx in range(self.n_sims[None]):
+            final_com_y = self.center[sim_idx, self.steps[None]].y
+            combined_height = (self.lowest_point[sim_idx] + final_com_y) / 2.0
+            initial_y = self.center[sim_idx, 0].y
+            self.loss[sim_idx] = -(combined_height - initial_y)
