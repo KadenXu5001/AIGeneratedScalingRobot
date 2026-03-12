@@ -278,26 +278,38 @@ class HeightSimulator:
                 self.vinc[sim_idx, t+1, endpoint1] += -impulse  # Equal and opposite impulse to mass1
                 self.vinc[sim_idx, t+1, endpoint2] += impulse   # Equal and opposite impulse to mass2
 
+    @ti.func
+    def get_terrain_info(self, x_pos, y_pos):
+        gap_half, elev, slope, slant, thick = 0.25, 0.2, 0.2, 1.0, 0.05
+        f_h, c_h = self.ground_height[None], 100.0
+        for i in ti.static(range(20)):
+            row_y = self.ground_height[None] + (ti.cast(i, ti.f32) * elev)
+            dx = ti.abs(x_pos)
+            if dx > gap_half and dx < (gap_half + slant):
+                top = row_y + ((dx - gap_half) * slope)
+                bot = top - thick
+                if y_pos >= top - 0.01: f_h = ti.max(f_h, top)
+                elif y_pos <= bot + 0.01: c_h = ti.min(c_h, bot)
+        return f_h, c_h
+
     @ti.kernel
     def advance(self, t: ti.i32):
         for sim_idx, mass_idx in ti.ndrange(self.n_sims[None], self.max_n_masses[None]):
             if mass_idx < self.n_masses[sim_idx]:
-                damping = ti.exp(-self.dt[None] * self.drag_damping[None])  # Exponential velocity decay from air drag
-                g = self.dt[None] * ti.Vector([0.0, -self.gravity[None]])   # Gravity impulse vector for this timestep
-                # New velocity = damped old velocity + gravity + spring impulses accumulated in vinc
-                newv = damping * self.v[sim_idx, t-1, mass_idx] + g + self.vinc[sim_idx, t, mass_idx]
-                oldx = self.x[sim_idx, t-1, mass_idx]          # Previous position
-                newx = oldx + self.dt[None] * newv              # Euler integration: new position
-                if newx[1] < self.ground_height[None]:          # Check if mass has penetrated the ground
-                    toi = (self.ground_height[None] - oldx[1]) / newv[1]      # Time of impact: when exactly did it hit?
-                    toi = ti.math.clamp(toi, 0.0, self.dt[None])              # Clamp toi to valid range [0, dt]
-                    newx_toi = oldx + toi * newv                               # Position exactly at moment of contact
-                    newv_contact = self.v_on_contact(newv, ti.Vector([0.0, 1.0]))   # Reflect/modify velocity on contact
-                    newx_contact = newx_toi + (self.dt[None] - toi) * newv_contact  # Advance remaining time with post-contact velocity
-                    newx = newx_contact  # Use ground-corrected position
-                    newv = newv_contact  # Use ground-corrected velocity
-                self.x[sim_idx, t, mass_idx] = newx  # Store updated position
-                self.v[sim_idx, t, mass_idx] = newv  # Store updated velocity
+                damping = ti.exp(-self.dt[None] * self.drag_damping[None])
+                g = self.dt[None] * ti.Vector([0.0, -self.gravity[None]])
+                v_o, x_o = self.v[sim_idx, t-1, mass_idx], self.x[sim_idx, t-1, mass_idx]
+                new_v = damping * v_o + g + self.vinc[sim_idx, t, mass_idx]
+                new_x = x_o + self.dt[None] * new_v
+                
+                # Check for floor and ceiling rungs
+                f_h, c_h = self.get_terrain_info(new_x[0], x_o[1])
+                if new_x[1] < f_h: 
+                    new_x[1], new_v.y = f_h, 0.0
+                elif new_x[1] > c_h: 
+                    new_x[1], new_v.y = c_h, 0.0
+                
+                self.x[sim_idx, t, mass_idx], self.v[sim_idx, t, mass_idx] = new_x, new_v
 
     @ti.func
     def v_on_contact(self, v_old: vec2, normal: vec2) -> vec2:

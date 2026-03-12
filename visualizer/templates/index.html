@@ -143,11 +143,47 @@
                 y: cy - offsetY * scale
             };
         }
+
+        function drawTerrain() {
+            const gapHalfWidth = 0.25;
+            const stepElevation = 0.2;
+            const slope = 0.2;
+            const slantLength = 1.0;
+            const rungThickness = 0.05;
+
+            // Set color to solid orange
+            ctx.strokeStyle = '#FF8C00'; 
+            ctx.lineWidth = rungThickness * 600; // Match physical thickness in pixels
+            
+            for (let i = 0; i < 20; i++) {
+                const baseY = i * stepElevation;
+                
+                // Draw Left Side
+                ctx.beginPath();
+                let p1 = worldToScreen(-gapHalfWidth, baseY);
+                let p2 = worldToScreen(-(gapHalfWidth + slantLength), baseY + slantLength * slope);
+                ctx.moveTo(p1.x, p1.y);
+                ctx.lineTo(p2.x, p2.y);
+                ctx.stroke();
+
+                // Draw Right Side
+                ctx.beginPath();
+                p1 = worldToScreen(gapHalfWidth, baseY);
+                p2 = worldToScreen(gapHalfWidth + slantLength, baseY + slantLength * slope);
+                ctx.moveTo(p1.x, p1.y);
+                ctx.lineTo(p2.x, p2.y);
+                ctx.stroke();
+            }
+        }
+
+            
         
         function draw() {
             // Clear canvas - light blue-gray background
             ctx.fillStyle = '#c5d5e0';
             ctx.fillRect(0, 0, canvas.width, canvas.height);
+
+            drawTerrain();
             
             // Draw ground grid to show movement
             const gridSpacing = 0.5; // Grid every 0.5 world units
