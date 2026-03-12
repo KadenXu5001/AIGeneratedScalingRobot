@@ -13,13 +13,13 @@ taichi:
 # Use sim_steps to set the number of simulation steps to run for each robot. The default probably does not need to be changed.
 ## Simulator configuration parameters
 simulator:
-  n_sims: 3
-  sim_steps: 1000
-  learning_steps: 20
+  n_sims: 64
+  sim_steps: 1600
+  learning_steps: 50
   dt: 3e-3
   eps: 1e-5
   springA: 0.1
-  springK: 15000.0
+  springK: 25000.0
   ground_height: 0.02
   gravity: 8.0
   friction: 0.9
@@ -31,6 +31,8 @@ simulator:
   adam_beta1: 0.9
   adam_beta2: 0.999
   learning_rate: 7e-3
+  rung_elevation: 0.3
+  rung_half_distance: 0.25
 # simulator:
 #   n_sims: 16
 #   sim_steps: 1000

@@ -28,6 +28,8 @@
         let activations = [];
         let centerOfMass = [0, 0];
         let currentStep = 0;
+        let currentRungElevation = 0.2;
+        let currentRunghalfdistance = .25;
         
         // UI elements
         const actualFpsDisplay = document.getElementById('actualFps');
@@ -146,32 +148,57 @@
 
         function drawTerrain() {
             const gapHalfWidth = 0.25;
-            const stepElevation = 0.2;
+            const stepElevation = currentRungElevation || 0.2;
             const slope = 0.2;
             const slantLength = 1.0;
             const rungThickness = 0.05;
+            const roundingRadius = 0.15; // Must match your Taichi code
 
-            // Set color to solid orange
             ctx.strokeStyle = '#FF8C00'; 
-            ctx.lineWidth = rungThickness * 600; // Match physical thickness in pixels
+            ctx.lineWidth = rungThickness * 600; 
             
-            for (let i = 0; i < 20; i++) {
+            for (let i = 1; i < 20; i++) {
                 const baseY = i * stepElevation;
-                
-                // Draw Left Side
+
+                // --- DRAW LEFT SIDE ---
                 ctx.beginPath();
-                let p1 = worldToScreen(-gapHalfWidth, baseY);
-                let p2 = worldToScreen(-(gapHalfWidth + slantLength), baseY + slantLength * slope);
+                let p1 = worldToScreen(-gapHalfWidth, baseY); // Inner Top Corner
+                let p2 = worldToScreen(-(gapHalfWidth + slantLength), baseY + slantLength * slope); // Outer Top
+                
+                // Draw the top slope
                 ctx.moveTo(p1.x, p1.y);
                 ctx.lineTo(p2.x, p2.y);
+                
+                // Draw the outer vertical edge
+                let p3 = worldToScreen(-(gapHalfWidth + slantLength), (baseY + slantLength * slope) - rungThickness);
+                ctx.lineTo(p3.x, p3.y);
+                
+                // Draw the bottom flat part
+                let p4 = worldToScreen(-(gapHalfWidth + roundingRadius), baseY - rungThickness);
+                ctx.lineTo(p4.x, p4.y);
+                
+                // Draw the rounded inner corner (The "Slide" part)
+                // Control point is the original sharp corner, end point is the inner edge
+                let control = worldToScreen(-gapHalfWidth, baseY - rungThickness);
+                ctx.quadraticCurveTo(control.x, control.y, p1.x, p1.y);
                 ctx.stroke();
 
-                // Draw Right Side
+                // --- DRAW RIGHT SIDE ---
                 ctx.beginPath();
-                p1 = worldToScreen(gapHalfWidth, baseY);
-                p2 = worldToScreen(gapHalfWidth + slantLength, baseY + slantLength * slope);
-                ctx.moveTo(p1.x, p1.y);
-                ctx.lineTo(p2.x, p2.y);
+                let r1 = worldToScreen(gapHalfWidth, baseY);
+                let r2 = worldToScreen(gapHalfWidth + slantLength, baseY + slantLength * slope);
+                
+                ctx.moveTo(r1.x, r1.y);
+                ctx.lineTo(r2.x, r2.y);
+                
+                let r3 = worldToScreen(gapHalfWidth + slantLength, (baseY + slantLength * slope) - rungThickness);
+                ctx.lineTo(r3.x, r3.y);
+                
+                let r4 = worldToScreen(gapHalfWidth + roundingRadius, baseY - rungThickness);
+                ctx.lineTo(r4.x, r4.y);
+                
+                let rControl = worldToScreen(gapHalfWidth, baseY - rungThickness);
+                ctx.quadraticCurveTo(rControl.x, rControl.y, r1.x, r1.y);
                 ctx.stroke();
             }
         }
@@ -275,6 +302,9 @@
                 
                 if (msg.type === 'topology') {
                     springs = msg.springs;
+                    currentRungElevation = msg.rung_elevation || 0.2;
+                    
+
                     console.log(`Loaded robot: ${msg.n_masses} masses, ${msg.n_springs} springs`);
                 } else if (msg.type === 'step') {
                     positions = msg.positions;

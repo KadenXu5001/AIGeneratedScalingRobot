@@ -54,7 +54,8 @@ class HeightSimulator:
         self.adam_beta1 = ti.field(dtype=ti.f32, shape=(), needs_grad=False)      # Adam optimizer: exponential decay for 1st moment
         self.adam_beta2 = ti.field(dtype=ti.f32, shape=(), needs_grad=False)      # Adam optimizer: exponential decay for 2nd moment
         self.learning_rate = ti.field(dtype=ti.f32, shape=(), needs_grad=False)   # Learning rate for weight updates
-
+        self.rung_elev = ti.field(dtype=ti.f32, shape=(), needs_grad=False)
+        self.rung_half_distance = ti.field(dtype=ti.f32, shape=(), needs_grad=False)
         # --- Copy values from Python config dict into Taichi fields ---
         self.n_sims[None] = self.config["n_sims"]
         self.steps[None] = self.config["sim_steps"]
@@ -75,6 +76,8 @@ class HeightSimulator:
         self.adam_beta1[None] = self.config["adam_beta1"]
         self.adam_beta2[None] = self.config["adam_beta2"]
         self.learning_rate[None] = self.config["learning_rate"]
+        self.rung_elev[None] = self.config.get("rung_elevation", 0.2)
+        self.rung_half_distance[None] = self.config.get("rung_half_distance", 0.25)
 
     def allocate_fields(self):
         # --- Structural fields (no gradients needed) ---
@@ -280,16 +283,38 @@ class HeightSimulator:
 
     @ti.func
     def get_terrain_info(self, x_pos, y_pos):
-        gap_half, elev, slope, slant, thick = 0.25, 0.2, 0.2, 1.0, 0.05
+        # Parameters for the terrain
+        gap_half, elev, slope, slant, thick = 0.25, self.rung_elev[None], 0.2, 1.0, 0.05
         f_h, c_h = self.ground_height[None], 100.0
-        for i in ti.static(range(20)):
+        
+        # Radius of the "rounding" effect
+        rounding_radius = 0.15 
+
+        for i in ti.static(range(1,20)):
             row_y = self.ground_height[None] + (ti.cast(i, ti.f32) * elev)
             dx = ti.abs(x_pos)
+            
             if dx > gap_half and dx < (gap_half + slant):
                 top = row_y + ((dx - gap_half) * slope)
-                bot = top - thick
-                if y_pos >= top - 0.01: f_h = ti.max(f_h, top)
-                elif y_pos <= bot + 0.01: c_h = ti.min(c_h, bot)
+                
+                # --- ROUNDED CEILING LOGIC ---
+                # Standard flat bottom
+                bot = top - thick 
+                
+                # If the mass is near the inner edge (the gap), 
+                # we curve the bottom height 'upward'
+                dist_from_edge = dx - gap_half
+                if dist_from_edge < rounding_radius:
+                    # Circular arc formula: creates a smooth curve up to the edge
+                    # This makes the "corner" of the ceiling feel like a ball
+                    offset = rounding_radius - ti.sqrt(ti.max(0.0, rounding_radius**2 - (rounding_radius - dist_from_edge)**2))
+                    bot += offset
+
+                if y_pos >= top - 0.01: 
+                    f_h = ti.max(f_h, top)
+                elif y_pos <= bot + 0.01: 
+                    c_h = ti.min(c_h, bot)
+                    
         return f_h, c_h
 
     @ti.kernel

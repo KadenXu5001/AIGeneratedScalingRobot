@@ -66,6 +66,9 @@ def stream():
             "springs": robot["springs"].tolist(),
             "n_masses": int(n_masses_cached),
             "n_springs": int(n_springs_cached),
+            "rung_elevation": config["simulator"].get("rung_elevation", 0.2),
+            "rung_half_distance": config["simulator"].get("rung_half_distance", 0.2),
+            "ground_height": config["simulator"].get("ground_height", 0.1)
         }
         yield f"data: {json.dumps(topology)}\n\n"
         
@@ -122,7 +125,7 @@ def stream():
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("--input", type=str, default="robot_2.npy", help="Path to saved robot .npy file")
+    parser.add_argument("--input", type=str, default="top_2_robot_after.npy", help="Path to saved robot .npy file")
     parser.add_argument("--config", type=str, default="config.yaml", help="Path to config file")
     parser.add_argument("--port", type=int, default=5000)
     parser.add_argument("--debug", action="store_true")
@@ -134,6 +137,7 @@ if __name__ == "__main__":
     print(f"Robot: {robot['n_masses']} masses, {robot['n_springs']} springs")
     
     # Load config
+    global config
     config = load_config(args.config)
     
     # Set up simulator config for single robot visualization

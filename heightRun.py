@@ -14,55 +14,66 @@ if __name__ == "__main__":
 
     # Set the random seed for reproducibility
     np.random.seed(config["seed"])
-    # Randomly sample robots
-    # NOTE: the number of robots should match the number of parallel simulations allocated in the simulator config
     robots = load_robots(num_robots=config["simulator"]["n_sims"])
 
-    # Extract the number of masses and springs in each robot
+    # Extract the number of masses and springs
     num_masses = [robot["n_masses"] for robot in robots]
     num_springs = [robot["n_springs"] for robot in robots]
-    # Find the largest number of masses and springs in any robot
     max_num_masses = max(num_masses)
     max_num_springs = max(num_springs)
-    # Save the maximum number of masses and springs to the simulator config
-    # NOTE: this is essential to ensure the simulator allocates the correct amount of memory for the simulation
+    
     config["simulator"]["n_masses"] = max_num_masses
     config["simulator"]["n_springs"] = max_num_springs
 
     # Initialize the simulator
-    simulator = HeightSimulator(sim_config=config["simulator"], taichi_config=config["taichi"],seed=config["seed"], needs_grad=True)
+    simulator = HeightSimulator(sim_config=config["simulator"], taichi_config=config["taichi"], seed=config["seed"], needs_grad=True)
 
-    # Extract the masses and springs from each robot
     masses = [robot["masses"] for robot in robots]
     springs = [robot["springs"] for robot in robots]
-    # Initialize the simulator state with the unique geometries of the robots
     simulator.initialize(masses, springs)
+
+    # --- CAPTURE "BEFORE" STATE ---
+    # We get the control parameters right after initialization
+    initial_control_params = simulator.get_control_params(range(len(robots)))
 
     print(f"springK={config['simulator']['springK']}, lr={config['simulator']['learning_rate']}, drag={config['simulator']['drag_damping']}")
 
-    # Train the robots to perform locomotion
-    # The number of learning steps is specified in the configuration
-    fitness_history = simulator.train() # numpy array of shape (n_robots, n_learning_steps)
-    # Save the fitness history to a file
+    # Train the robots
+    fitness_history = simulator.train() 
     np.save("fitness_history.npy", fitness_history)
 
-    # Select the final fitness of each robot after training
+    # --- IDENTIFY BEST ROBOT ---
     fitness = fitness_history[:, -1]
-    print(fitness)
-    # Sort the robots by fitness
-    ranking = np.argsort(fitness)[::-1]
-    ranked_robots = [robots[i] for i in ranking]
-    # Select the top 3 performers
-    top_3_idxs = ranking[:3]
-    top_3_robots = [robots[i] for i in top_3_idxs]
-    # Extract the control parameters of the top 3 performers
-    top_3_control_params = simulator.get_control_params(top_3_idxs)
-    # Save each of the top 3 robots and their control parameters to a file
-    for i in range(3):
-        robot = top_3_robots[i]
-        control_params = top_3_control_params[i]
-        robot["control_params"] = control_params
-        # Save the max dimensions used during training so visualizer can recreate the same memory allocation setup in the simulator
-        robot["max_n_masses"] = max_num_masses
-        robot["max_n_springs"] = max_num_springs
-        np.save(f"robot_{i}.npy", robot)
+    best_idx = np.argmax(fitness) # Index of the #1 performer
+    best_robot_meta = robots[best_idx]
+    
+    # --- CAPTURE "AFTER" STATE ---
+    
+
+# 1. Get the indices of the top 5 robots based on fitness (descending)
+    top_5_indices = np.argsort(fitness)[-5:][::-1]
+
+    # This returns a list of length 5
+    final_control_params = simulator.get_control_params(top_5_indices)
+
+    for i, rank_idx in enumerate(top_5_indices):
+        # 1. Setup Base Metadata (use the specific robot's metadata, not best_robot_meta)
+        robot_meta = robots[rank_idx].copy() 
+        robot_meta["max_n_masses"] = max_num_masses
+        robot_meta["max_n_springs"] = max_num_springs
+        
+        # 2. Save "BEFORE" version
+        # Use [rank_idx] because initial_control_params contains the WHOLE population
+        meta_before = robot_meta.copy()
+        meta_before["control_params"] = initial_control_params[rank_idx]
+        np.save(f"top_{i+1}_robot_before.npy", meta_before)
+        
+        # 3. Save "AFTER" version
+        # Use [i] because final_control_params ONLY contains the 5 you just requested
+        meta_after = robot_meta.copy()
+        meta_after["control_params"] = final_control_params[i] 
+        np.save(f"top_{i+1}_robot_after.npy", meta_after)
+
+        print(f"Saved Rank {i+1} (Index {rank_idx}): Fitness {fitness[rank_idx]}")
+
+    print(f"Saved best robot (Index {best_idx}) states. Final Fitness: {fitness[best_idx]}")
