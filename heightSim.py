@@ -137,28 +137,21 @@ class HeightSimulator:
         return -np.array(fitness_history).T  # Return negated loss as "fitness" (higher = better), shape [n_sims, steps]
 
     def learning_step(self):
-        self.clear_grads()          # Zero all gradient buffers
-        self.reinitialize_robots()  # Reset simulation state
-        self.forward()              # This now calls compute_final_height at the end
-        
-        # We no longer call self.compute_loss() because it had the TEMPERATURE math.
-        # compute_final_height() was already called at the end of forward(), 
-        # but calling it here again (or ensuring it was called) is fine.
-        
-        # Seed backprop: use 1.0 because we aren't dividing by TEMPERATURE anymore.
-        # We divide by n_sims (optional) to keep gradients stable regardless of population size.
+        self.clear_grads()         
+        self.reinitialize_robots() 
+        self.forward()              
         self.loss.grad.fill(1.0 / self.n_sims[None]) 
         
-        self.backward()             # Backpropagate through all timesteps
-        self.adam_step[None] += 1   # Increment Adam step
+        self.backward()             
+        self.adam_step[None] += 1   
         self.clip_grads()
-        self.update_weights()       # Apply Adam update
+        self.update_weights()       
         
         return self.loss.to_numpy()
 
     def evaluation_step(self):
         self.reinitialize_robots()
-        self.forward() # forward() now includes the final height calc
+        self.forward() 
         return self.loss.to_numpy()
 
     def forward(self):
@@ -170,13 +163,13 @@ class HeightSimulator:
             self.advance(t + 1)
         # Only compute the height stats at the very last step
         self.compute_com(self.steps[None])
-        self.find_lowest_points()      # Step 1
+        self.find_lowest_points()      
         self.compute_final_loss_kernel()
 
     def backward(self):
         # Start backprop from the final height calculation
         self.compute_final_loss_kernel.grad()
-        self.find_lowest_points.grad() # Taichi can now differentiate this!
+        self.find_lowest_points.grad() 
         self.compute_com.grad(self.steps[None])
         
         for t in range(self.steps[None]-1, -1, -1):
@@ -308,8 +301,7 @@ class HeightSimulator:
                 # Standard flat bottom
                 bot = top - thick 
                 
-                # If the mass is near the inner edge (the gap), 
-                # we curve the bottom height 'upward'
+                
                 dist_from_edge = dx - gap_half
                 if dist_from_edge < rounding_radius:
                     # Circular arc formula: creates a smooth curve up to the edge
