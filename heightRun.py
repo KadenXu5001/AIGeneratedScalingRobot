@@ -1,79 +1,100 @@
+import numpy as np
+import copy
+import os
+from argparse import ArgumentParser
 from heightSim import HeightSimulator
 from utils import load_config
-from argparse import ArgumentParser
 from robot import load_robots
-import numpy as np
+
+def mutate_robot(robot_data, mutation_rate=0.2, jitter_amount=0.08):
+    new_robot = copy.deepcopy(robot_data)
+    masses = np.array(new_robot["masses"])
+    mask = np.random.rand(*masses.shape) < mutation_rate
+    jitter = np.random.uniform(-jitter_amount, jitter_amount, masses.shape)
+    masses += jitter * mask
+    masses[:, 1] = np.maximum(masses[:, 1], 0.05) 
+    new_robot["masses"] = masses.tolist()
+    new_robot["n_masses"] = len(new_robot["masses"])
+    return new_robot
 
 if __name__ == "__main__":
     parser = ArgumentParser()
     parser.add_argument("--config", type=str, default="config.yaml")
+    parser.add_argument("--generations", type=int, default=10)
     args = parser.parse_args()
 
-    # Load the configuration
     config = load_config(args.config)
-
-    # Set the random seed for reproducibility
     np.random.seed(config["seed"])
-    robots = load_robots(num_robots=config["simulator"]["n_sims"])
-
-    # Extract the number of masses and springs
-    num_masses = [robot["n_masses"] for robot in robots]
-    num_springs = [robot["n_springs"] for robot in robots]
-    max_num_masses = max(num_masses)
-    max_num_springs = max(num_springs)
+    pop_size = config["simulator"]["n_sims"]
     
-    config["simulator"]["n_masses"] = max_num_masses
-    config["simulator"]["n_springs"] = max_num_springs
+    # Generation 0: Initial random or loaded robots
+    current_robots = load_robots(num_robots=pop_size)
 
-    # Initialize the simulator
-    simulator = HeightSimulator(sim_config=config["simulator"], taichi_config=config["taichi"], seed=config["seed"], needs_grad=True)
+    for gen in range(args.generations):
+        print(f"\n{'='*20} GENERATION {gen} {'='*20}")
 
-    masses = [robot["masses"] for robot in robots]
-    springs = [robot["springs"] for robot in robots]
-    simulator.initialize(masses, springs)
+        # 1. Setup metadata for GPU allocation
+        num_masses = [r["n_masses"] for r in current_robots]
+        num_springs = [r["n_springs"] for r in current_robots]
+        max_num_masses, max_num_springs = max(num_masses), max(num_springs)
+        config["simulator"]["n_masses"] = max_num_masses
+        config["simulator"]["n_springs"] = max_num_springs
 
-    # --- CAPTURE "BEFORE" STATE ---
-    # We get the control parameters right after initialization
-    initial_control_params = simulator.get_control_params(range(len(robots)))
+        # 2. Re-initialize Simulator
+        simulator = HeightSimulator(sim_config=config["simulator"], taichi_config=config["taichi"], seed=config["seed"])
+        simulator.initialize([r["masses"] for r in current_robots], [r["springs"] for r in current_robots])
 
-    print(f"springK={config['simulator']['springK']}, lr={config['simulator']['learning_rate']}, drag={config['simulator']['drag_damping']}")
+        # 3. Handle Brain Inheritance (Lamarckian)
+        for i, robot in enumerate(current_robots):
+            if "control_params" in robot:
+                simulator.set_control_params([i], [robot["control_params"]])
 
-    # Train the robots
-    fitness_history = simulator.train() 
-    np.save("fitness_history.npy", fitness_history)
+        # --- CAPTURE "BEFORE" STATE FOR ALL ---
+        # We grab these now so we can save the top 5's original state later
+        initial_params_all = simulator.get_control_params(range(pop_size))
 
-    # --- IDENTIFY BEST ROBOT ---
-    fitness = fitness_history[:, -1]
-    best_idx = np.argmax(fitness) # Index of the #1 performer
-    best_robot_meta = robots[best_idx]
-    
-    # --- CAPTURE "AFTER" STATE ---
-    
+        # 4. Train
+        print(f"Training Generation {gen}...")
+        fitness_history = simulator.train() 
+        final_fitness = fitness_history[:, -1]
 
-# 1. Get the indices of the top 5 robots based on fitness (descending)
-    top_5_indices = np.argsort(fitness)[-5:][::-1]
-
-    # This returns a list of length 5
-    final_control_params = simulator.get_control_params(top_5_indices)
-
-    for i, rank_idx in enumerate(top_5_indices):
-        # 1. Setup Base Metadata (use the specific robot's metadata, not best_robot_meta)
-        robot_meta = robots[rank_idx].copy() 
-        robot_meta["max_n_masses"] = max_num_masses
-        robot_meta["max_n_springs"] = max_num_springs
+        # 5. Selection
+        top_5_indices = np.argsort(final_fitness)[-5:][::-1]
         
-        # 2. Save "BEFORE" version
-        # Use [rank_idx] because initial_control_params contains the WHOLE population
-        meta_before = robot_meta.copy()
-        meta_before["control_params"] = initial_control_params[rank_idx]
-        np.save(f"top_{i+1}_robot_before.npy", meta_before)
+        # 6. Capture "AFTER" State for Top 5
+        final_params_top_5 = simulator.get_control_params(top_5_indices)
+
+        winners = []
+        for i, rank_idx in enumerate(top_5_indices):
+            # Base robot data (Morphology)
+            robot_meta = current_robots[rank_idx].copy()
+            robot_meta["max_n_masses"] = max_num_masses
+            robot_meta["max_n_springs"] = max_num_springs
+
+            # A. Save "Before" version (Morphology + Initial Weights)
+            meta_before = robot_meta.copy()
+            meta_before["control_params"] = initial_params_all[rank_idx]
+            np.save(f"gen{gen}_rank{i+1}_before.npy", meta_before)
+
+            # B. Save "After" version (Morphology + Trained Weights)
+            meta_after = robot_meta.copy()
+            meta_after["control_params"] = final_params_top_5[i]
+            np.save(f"gen{gen}_rank{i+1}_after.npy", meta_after)
+            
+            # Store for reproduction
+            winners.append(meta_after)
+
+            if i == 0:
+                print(f"Gen {gen} Top Fitness: {final_fitness[rank_idx]:.4f}")
+
+        # 7. Reproduction
+        next_gen = []
+        next_gen.extend(winners) # Elitism
+        while len(next_gen) < pop_size:
+            parent = np.random.choice(winners)
+            next_gen.append(mutate_robot(parent))
         
-        # 3. Save "AFTER" version
-        # Use [i] because final_control_params ONLY contains the 5 you just requested
-        meta_after = robot_meta.copy()
-        meta_after["control_params"] = final_control_params[i] 
-        np.save(f"top_{i+1}_robot_after.npy", meta_after)
+        current_robots = next_gen
+        del simulator # Clean up GPU memory
 
-        print(f"Saved Rank {i+1} (Index {rank_idx}): Fitness {fitness[rank_idx]}")
-
-    print(f"Saved best robot (Index {best_idx}) states. Final Fitness: {fitness[best_idx]}")
+    print("\nFull Evolution and Save cycle complete.")

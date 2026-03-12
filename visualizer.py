@@ -125,7 +125,7 @@ def stream():
 
 if __name__ == "__main__":
     parser = ArgumentParser()
-    parser.add_argument("--input", type=str, default="top_1_robot_after.npy", help="Path to saved robot .npy file")
+    parser.add_argument("--input", type=str, default="top_5_robot_before.npy", help="Path to saved robot .npy file")
     parser.add_argument("--config", type=str, default="config.yaml", help="Path to config file")
     parser.add_argument("--port", type=int, default=5000)
     parser.add_argument("--debug", action="store_true")
